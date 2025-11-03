@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Gender Balance Analyzer</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/wordcloud2.js/1.1.0/wordcloud2.min.js"></script>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 20px; max-width: 800px; }
+    textarea { width: 100%; height: 200px; margin-bottom: 10px; }
+    button { padding: 10px 15px; background: #007BFF; color: white; border: none; border-radius: 5px; cursor: pointer; margin-right: 8px; }
+    button:hover { background: #0056b3; }
+    #chartContainer { width: 350px; margin-top: 20px; }
+    #wordCloud { width: 100%; height: 350px; border: 1px solid #ccc; margin-top: 20px; }
+    .hidden { display: none; }
+  </style>
+</head>
+<body>
+  <h2>Gender Balance Analyzer</h2>
+  <p>Paste your bibliography or syllabus text below:</p>
+  <textarea id="inputText" placeholder="Paste text here..."></textarea><br>
+  <button id="analyzeBtn">Analyze</button>
+  <button id="downloadBtn" class="hidden">Download CSV</button>
+
+  <div id="results"></div>
+  <div id="chartContainer">
+    <canvas id="genderChart"></canvas>
+  </div>
+  <div id="wordCloud"></div>
+
+  <script>
+    async function analyzeText() {
+      const text = document.getElementById('inputText').value;
+      if (!text.trim()) return alert("Please paste some text first.");
+
+      const capitalizedWords = text.match(/\b[A-Z][a-z]+\b/g) || [];
+      const stopwords = new Set(["The","And","Of","In","On","At","To","For","By"]);
+      const names = capitalizedWords.filter(w => !stopwords.has(w));
+      const nameCounts = {};
+      for (const n of names) nameCounts[n] = (nameCounts[n] || 0) + 1;
+
+      const uniqueNames = [...new Set(names)];
+      const genderMap = {};
+
+      for (const name of uniqueNames) {
+        try {
+          const res = await fetch(`https://api.genderize.io?name=${name}`);
+          const data = await res.json();
+          genderMap[name] = data.gender || "unknown";
+        } catch {
+          genderMap[name] = "unknown";
+        }
+      }
+
+      let male = 0, female = 0, unknown = 0;
+      for (const [name, gender] of Object.entries(genderMap)) {
+        const count = nameCounts[name];
+        if (gender === "male") male += count;
+        else if (gender === "female") female += count;
+        else unknown += count;
+      }
+
+      const ratio = (female + male > 0) ? ((female / (female + male)) * 100).toFixed(1) : 0;
+      renderResults({male, female, unknown, ratio});
+      renderChart(male, female, unknown);
+      renderWordCloud(nameCounts, genderMap);
+      prepareCSV(nameCounts, genderMap);
+    }
+
+    function renderResults(data) {
+      document.getElementById('results').innerHTML = `
+        <h3>Results</h3>
+        <p><strong>Male names:</strong> ${data.male}</p>
+        <p><strong>Female names:</strong> ${data.female}</p>
+        <p><strong>Unknown:</strong> ${data.unknown}</p>
+        <p><strong>Female ratio:</strong> ${data.ratio}%</p>
+      `;
+    }
+
+    function renderChart(male, female, unknown) {
+      const ctx = document.getElementById('genderChart').getContext('2d');
+      new Chart(ctx, {
+        type: 'pie',
+        data: {
+          labels: ['Male', 'Female', 'Unknown'],
+          datasets: [{
+            data: [male, female, unknown],
+            backgroundColor: ['#007BFF', '#FF69B4', '#AAAAAA']
+          }]
+        },
+        options: { plugins: { legend: { position: 'bottom' } } }
+      });
+    }
+
+    function renderWordCloud(nameCounts, genderMap) {
+      const entries = Object.entries(nameCounts).map(([name, count]) => {
+        const gender = genderMap[name] || "unknown";
+        const color = gender === "female" ? "#FF69B4" :
+                      gender === "male" ? "#007BFF" : "#888";
+        return {text: name, weight: count, color};
+      });
+      const list = entries.map(e => [e.text, e.weight * 10]);
+      WordCloud(document.getElementById('wordCloud'), {
+        list,
+        color: (word) => {
+          const entry = entries.find(e => e.text === word);
+          return entry ? entry.color : '#000';
+        },
+        rotateRatio: 0.2,
+        backgroundColor: '#fff'
+      });
+    }
+
+    function prepareCSV(nameCounts, genderMap) {
+      const rows = [["Name", "Gender", "Count"]];
+      for (const [name, count] of Object.entries(nameCounts)) {
+        rows.push([name, genderMap[name] || "unknown", count]);
+      }
+      const csv = rows.map(r => r.join(",")).join("\n");
+      const blob = new Blob([csv], { type: "text/csv" });
+      const url = URL.createObjectURL(blob);
+      const btn = document.getElementById('downloadBtn');
+      btn.classList.remove('hidden');
+      btn.onclick = () => {
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = "gender_analysis.csv";
+        a.click();
+      };
+    }
+
+    document.getElementById('analyzeBtn').addEventListener('click', analyzeText);
+  </script>
+</body>
+</html>
