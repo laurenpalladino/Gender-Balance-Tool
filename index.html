@@ -29,22 +29,46 @@
   <div id="wordCloud"></div>
 
   <script>
+    const NON_NAME_WORDS = new Set([
+      "Journal","Press","University","Review","Politics","Political","Science",
+      "Society","American","Oxford","Cambridge","Harvard","Stanford","Annual",
+      "Edition","Sociological","Quarterly","Economics","Philosophy","History"
+    ]);
+
+    // Extract likely first names from bibliographies
+    function extractLikelyNames(text) {
+      const names = new Set();
+
+      // Pattern 1: Lastname, Firstname
+      const pattern1 = /([A-Z][a-z]+),\s*([A-Z][a-z]+)/g;
+      let match;
+      while ((match = pattern1.exec(text)) !== null) {
+        const first = match[2];
+        if (!NON_NAME_WORDS.has(first)) names.add(first);
+      }
+
+      // Pattern 2: Firstname Lastname (for text that lacks commas)
+      const pattern2 = /\b([A-Z][a-z]+)\s+[A-Z][a-z]+\b/g;
+      while ((match = pattern2.exec(text)) !== null) {
+        const first = match[1];
+        if (!NON_NAME_WORDS.has(first)) names.add(first);
+      }
+
+      // Filter out initials and weirdly short names
+      return [...names].filter(n => n.length > 2 && !n.match(/^[A-Z]\.?$/));
+    }
+
     async function analyzeText() {
       const text = document.getElementById('inputText').value;
       if (!text.trim()) return alert("Please paste some text first.");
 
-      const capitalizedWords = text.match(/\b[A-Z][a-z]+\b/g) || [];
-      const stopwords = new Set(["The","And","Of","In","On","At","To","For","By"]);
-      const names = capitalizedWords.filter(w => !stopwords.has(w));
-      const nameCounts = {};
-      for (const n of names) nameCounts[n] = (nameCounts[n] || 0) + 1;
+      const firstNames = extractLikelyNames(text);
+      if (firstNames.length === 0) return alert("No likely names found. Check your formatting.");
 
-      const uniqueNames = [...new Set(names)];
       const genderMap = {};
-
-      for (const name of uniqueNames) {
+      for (const name of firstNames) {
         try {
-          const res = await fetch(`https://api.genderize.io?name=${name}`);
+          const res = await fetch(`https://api.genderize.io?name=${encodeURIComponent(name)}`);
           const data = await res.json();
           genderMap[name] = data.gender || "unknown";
         } catch {
@@ -52,19 +76,17 @@
         }
       }
 
-      let male = 0, female = 0, unknown = 0;
-      for (const [name, gender] of Object.entries(genderMap)) {
-        const count = nameCounts[name];
-        if (gender === "male") male += count;
-        else if (gender === "female") female += count;
-        else unknown += count;
-      }
+      const counts = { male: 0, female: 0, unknown: 0 };
+      for (const g of Object.values(genderMap)) counts[g] = (counts[g] || 0) + 1;
 
-      const ratio = (female + male > 0) ? ((female / (female + male)) * 100).toFixed(1) : 0;
-      renderResults({male, female, unknown, ratio});
-      renderChart(male, female, unknown);
-      renderWordCloud(nameCounts, genderMap);
-      prepareCSV(nameCounts, genderMap);
+      const ratio = (counts.female + counts.male > 0)
+        ? ((counts.female / (counts.female + counts.male)) * 100).toFixed(1)
+        : 0;
+
+      renderResults({ ...counts, ratio });
+      renderChart(counts.male, counts.female, counts.unknown);
+      renderWordCloud(firstNames, genderMap);
+      prepareCSV(firstNames, genderMap);
     }
 
     function renderResults(data) {
@@ -92,12 +114,12 @@
       });
     }
 
-    function renderWordCloud(nameCounts, genderMap) {
-      const entries = Object.entries(nameCounts).map(([name, count]) => {
+    function renderWordCloud(names, genderMap) {
+      const entries = names.map(name => {
         const gender = genderMap[name] || "unknown";
         const color = gender === "female" ? "#FF69B4" :
                       gender === "male" ? "#007BFF" : "#888";
-        return {text: name, weight: count, color};
+        return { text: name, weight: 1, color };
       });
       const list = entries.map(e => [e.text, e.weight * 10]);
       WordCloud(document.getElementById('wordCloud'), {
@@ -106,16 +128,14 @@
           const entry = entries.find(e => e.text === word);
           return entry ? entry.color : '#000';
         },
-        rotateRatio: 0.2,
+        rotateRatio: 0.1,
         backgroundColor: '#fff'
       });
     }
 
-    function prepareCSV(nameCounts, genderMap) {
-      const rows = [["Name", "Gender", "Count"]];
-      for (const [name, count] of Object.entries(nameCounts)) {
-        rows.push([name, genderMap[name] || "unknown", count]);
-      }
+    function prepareCSV(names, genderMap) {
+      const rows = [["Name", "Gender"]];
+      for (const n of names) rows.push([n, genderMap[n] || "unknown"]);
       const csv = rows.map(r => r.join(",")).join("\n");
       const blob = new Blob([csv], { type: "text/csv" });
       const url = URL.createObjectURL(blob);
