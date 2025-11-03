@@ -6,8 +6,8 @@
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/wordcloud2.js/1.1.0/wordcloud2.min.js"></script>
   <style>
-    body { font-family: Arial, sans-serif; margin: 20px; max-width: 800px; }
-    textarea { width: 100%; height: 200px; margin-bottom: 10px; }
+    body { font-family: Arial, sans-serif; margin: 20px; max-width: 850px; }
+    textarea { width: 100%; height: 220px; margin-bottom: 10px; }
     button { padding: 10px 15px; background: #007BFF; color: white; border: none; border-radius: 5px; cursor: pointer; margin-right: 8px; }
     button:hover { background: #0056b3; }
     #chartContainer { width: 350px; margin-top: 20px; }
@@ -23,61 +23,87 @@
   <button id="downloadBtn" class="hidden">Download CSV</button>
 
   <div id="results"></div>
-  <div id="chartContainer">
-    <canvas id="genderChart"></canvas>
-  </div>
+  <div id="chartContainer"><canvas id="genderChart"></canvas></div>
   <div id="wordCloud"></div>
 
   <script>
+    // --- Filter out non-name words ---
     const NON_NAME_WORDS = new Set([
       "Journal","Press","University","Review","Politics","Political","Science",
       "Society","American","Oxford","Cambridge","Harvard","Stanford","Annual",
-      "Edition","Sociological","Quarterly","Economics","Philosophy","History"
+      "Edition","Sociological","Quarterly","Economics","Philosophy","History",
+      "Edition","Studies","Research","Social","Policy","Public","Theory"
     ]);
 
-    // Extract likely first names from bibliographies
-    function extractLikelyNames(text) {
+    // --- Extract likely first names ---
+    function extractLikelyFirstNames(text) {
       const names = new Set();
+      text = text.replace(/\n+/g, ' '); // remove line breaks
 
-      // Pattern 1: Lastname, Firstname
+      // Match Lastname, Firstname
       const pattern1 = /([A-Z][a-z]+),\s*([A-Z][a-z]+)/g;
       let match;
       while ((match = pattern1.exec(text)) !== null) {
-        const first = match[2];
-        if (!NON_NAME_WORDS.has(first)) names.add(first);
+        const first = normalizeName(match[2]);
+        if (isValidName(first)) names.add(first);
       }
 
-      // Pattern 2: Firstname Lastname (for text that lacks commas)
+      // Match Firstname Lastname (for cases without commas)
       const pattern2 = /\b([A-Z][a-z]+)\s+[A-Z][a-z]+\b/g;
       while ((match = pattern2.exec(text)) !== null) {
-        const first = match[1];
-        if (!NON_NAME_WORDS.has(first)) names.add(first);
+        const first = normalizeName(match[1]);
+        if (isValidName(first)) names.add(first);
       }
 
-      // Filter out initials and weirdly short names
-      return [...names].filter(n => n.length > 2 && !n.match(/^[A-Z]\.?$/));
+      return [...names];
+    }
+
+    function normalizeName(name) {
+      return name.charAt(0).toUpperCase() + name.slice(1).toLowerCase();
+    }
+
+    function isValidName(name) {
+      return (
+        name.length > 2 &&
+        !NON_NAME_WORDS.has(name) &&
+        !name.match(/^[A-Z]\.?$/)
+      );
+    }
+
+    // --- Batch API requests to Genderize.io (max 10 names per call) ---
+    async function getGenderBatch(names) {
+      const genderMap = {};
+      for (let i = 0; i < names.length; i += 10) {
+        const batch = names.slice(i, i + 10);
+        try {
+          const res = await fetch(`https://api.genderize.io?${batch.map(n => "name[]=" + encodeURIComponent(n)).join("&")}`);
+          const data = await res.json();
+          data.forEach(d => {
+            genderMap[d.name] = d.gender || "unknown";
+          });
+        } catch {
+          batch.forEach(n => genderMap[n] = "unknown");
+        }
+      }
+      return genderMap;
     }
 
     async function analyzeText() {
       const text = document.getElementById('inputText').value;
       if (!text.trim()) return alert("Please paste some text first.");
 
-      const firstNames = extractLikelyNames(text);
-      if (firstNames.length === 0) return alert("No likely names found. Check your formatting.");
-
-      const genderMap = {};
-      for (const name of firstNames) {
-        try {
-          const res = await fetch(`https://api.genderize.io?name=${encodeURIComponent(name)}`);
-          const data = await res.json();
-          genderMap[name] = data.gender || "unknown";
-        } catch {
-          genderMap[name] = "unknown";
-        }
+      const firstNames = extractLikelyFirstNames(text);
+      if (firstNames.length === 0) {
+        return alert("No likely first names found. Check formatting (should look like 'Lastname, Firstname').");
       }
 
+      const genderMap = await getGenderBatch(firstNames);
+
+      // Count totals
       const counts = { male: 0, female: 0, unknown: 0 };
-      for (const g of Object.values(genderMap)) counts[g] = (counts[g] || 0) + 1;
+      for (const gender of Object.values(genderMap)) {
+        counts[gender] = (counts[gender] || 0) + 1;
+      }
 
       const ratio = (counts.female + counts.male > 0)
         ? ((counts.female / (counts.female + counts.male)) * 100).toFixed(1)
