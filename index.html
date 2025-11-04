@@ -1,171 +1,379 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8"/>
-<title>Gender Balance Analyzer — Bibliography Mode</title>
+<title>Gender Balance Analyzer — Bibliography Mode (fixed)</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/wordcloud2.js/1.1.0/wordcloud2.min.js"></script>
 <style>
-body { font-family: Arial, sans-serif; margin: 20px; max-width: 1000px; }
-textarea { width: 100%; height: 240px; margin-bottom: 10px; font-family: monospace; }
-button { padding: 8px 12px; margin-right: 8px; background:#007BFF; color:#fff; border:none; border-radius:5px; cursor:pointer; }
-button:hover{ background:#0056b3 }
-#chartContainer { width: 360px; margin-top: 20px; display:inline-block; vertical-align: top; }
-#wordCloud { width: 560px; height: 360px; border: 1px solid #eee; display:inline-block; vertical-align: top; margin-left: 20px; }
-table { border-collapse: collapse; width: 100%; margin-top: 18px; }
-th, td { border: 1px solid #ddd; padding: 6px 8px; text-align: left; }
-th { background: #f8f8f8; }
-.small { font-size: 0.9rem; color:#555; }
+  body { font-family: Arial, sans-serif; margin: 20px; max-width: 1000px; }
+  textarea { width: 100%; height: 260px; margin-bottom: 10px; font-family: monospace; }
+  button { padding: 8px 12px; margin-right: 8px; background:#007BFF; color:#fff; border:none; border-radius:5px; cursor:pointer; }
+  button:hover{ background:#0056b3 }
+  #chartContainer { width: 360px; margin-top: 20px; display:inline-block; vertical-align: top; }
+  #wordCloud { width: 560px; height: 360px; border: 1px solid #eee; display:inline-block; vertical-align: top; margin-left: 20px; }
+  table { border-collapse: collapse; width: 100%; margin-top: 18px; }
+  th, td { border: 1px solid #ddd; padding: 6px 8px; text-align: left; }
+  th { background: #f8f8f8; }
+  .small { font-size: 0.9rem; color:#555; }
+  pre.debug { background:#f7f7f7; padding:8px; border:1px solid #eee; overflow:auto; }
 </style>
 </head>
 <body>
-<h2>Gender Balance Analyzer — Bibliography Mode</h2>
-<p class="small">Paste your bibliography. Tool extracts authors, detects first names, calls gender APIs, and shows results.</p>
+  <h2>Gender Balance Analyzer — Bibliography Mode (fixed)</h2>
+  <p class="small">Paste bibliography entries. The tool extracts authors robustly, finds given names, queries Genderize.io in batches, and shows results + debug info.</p>
 
-<textarea id="inputText" placeholder="Paste bibliography here..."></textarea><br>
-<button id="analyzeBtn">Analyze</button>
-<button id="downloadBtn" style="display:none">Download CSV</button>
+  <textarea id="inputText" placeholder="Paste bibliography here..."></textarea><br>
+  <button id="analyzeBtn">Analyze</button>
+  <button id="downloadBtn" style="display:none">Download CSV</button>
 
-<div id="visuals" style="margin-top:12px;">
-  <div id="chartContainer"><canvas id="genderChart"></canvas></div>
-  <div id="wordCloud"></div>
-</div>
+  <div id="visuals" style="margin-top:12px;">
+    <div id="chartContainer"><canvas id="genderChart"></canvas></div>
+    <div id="wordCloud"></div>
+  </div>
 
-<div id="results"></div>
-<h4>Debug table (authors & first names)</h4>
-<div id="debugTableWrap"></div>
+  <div id="results"></div>
+  <h4>Debug table (full author → first name → gender)</h4>
+  <div id="debugTableWrap"></div>
+  <h4>Raw genderize responses (for troubleshooting)</h4>
+  <pre id="rawResponses" class="debug"></pre>
 
 <script>
-// --- Utilities ---
-const NON_NAME_WORDS = new Set(["Journal","Press","University","Review","Politics","Science","Sociology","American","Oxford","Cambridge","Harvard","Stanford","Quarterly","PNAS","RSF"]);
+/* ---------- CONFIG ---------- */
+const NON_NAME_WORDS = new Set([
+  "Journal","Press","University","Review","Politics","Science","Sociology","American",
+  "Oxford","Cambridge","Harvard","Stanford","Quarterly","PNAS","RSF","Proceedings",
+  "Cambridge","Springer","Routledge"
+]);
+const BATCH_SIZE = 10; // Genderize supports batch name[] params
 
-function normalizeWord(w) {
-  w = w.replace(/[.,]/g,'').trim();
-  if (!w) return '';
-  return w.charAt(0).toUpperCase() + w.slice(1).toLowerCase();
+/* ---------- HELPERS ---------- */
+function normalizeToken(tok) {
+  if (!tok) return '';
+  tok = tok.replace(/^[\s"'\u2018\u2019]+|[\s"'\u2018\u2019]+$/g, ''); // strip quotes/apostrophes
+  tok = tok.replace(/[.,]$/,''); // trailing punctuation
+  if (!tok) return '';
+  // if ALL CAPS -> lowercase then capitalize
+  if (tok === tok.toUpperCase()) tok = tok.toLowerCase();
+  return tok.charAt(0).toUpperCase() + tok.slice(1);
 }
 
-// --- Author extraction ---
-function extractAuthors(entry) {
-  // Author block = text before first 4-digit year
+function isInitial(tok) {
+  return /^[A-Za-z]\.?$/.test(tok);
+}
+
+/* ---------- AUTHOR PARSING STRATEGY ----------
+
+Goal:
+- Identify author block (text before year)
+- Break that block into author entities. Bibliographies often use:
+  - "Lastname, Firstname, Lastname2, Firstname2, and Firstname3 Lastname3."
+Approach:
+- Replace " and " with a separator token then tokenize by commas.
+- Scan tokens left-to-right to form groups:
+    - If pattern looks like: [Lastname, Firstname] [Lastname2, Firstname2] ...
+      we group tokens in pairs: (token[i], token[i+1]) => "Lastname, Firstname"
+    - Otherwise, tokens without commas like "Firstname Lastname" become single authors.
+*/
+
+function splitEntries(text) {
+  // split on double newline blocks or single newline if no double
+  let entries = text.split(/\n{2,}/).map(s=>s.trim()).filter(Boolean);
+  if (entries.length === 0) return [];
+  if (entries.length === 1) {
+    entries = text.split(/\n/).map(s=>s.trim()).filter(Boolean);
+  }
+  return entries;
+}
+
+function extractAuthorBlock(entry) {
   const yearMatch = entry.match(/\b(17|18|19|20)\d{2}\b/);
-  let block = yearMatch ? entry.slice(0, yearMatch.index) : entry;
-  block = block.replace(/\bet al\.?/gi,''); // remove et al.
-  // Split multiple authors: " and " or ";"
-  let authors = block.split(/\s+and\s+|;/i).map(a => a.trim()).filter(Boolean);
-
-  const firstNames = [];
-  authors.forEach(author => {
-    if (!author) return;
-    let fname = null;
-    if (author.includes(',')) { // "Lastname, Firstname"
-      let parts = author.split(',');
-      if (parts.length >= 2) {
-        let tokens = parts[1].trim().split(/\s+/).filter(t => t.length>0 && t.length>1);
-        if (tokens.length>0) fname = normalizeWord(tokens[0].replace(/\./g,''));
-      }
-    } else { // "Firstname Lastname"
-      let tokens = author.trim().split(/\s+/).filter(t => t.length>0 && t.length>1);
-      if (tokens.length>0) fname = normalizeWord(tokens[0].replace(/\./g,''));
-    }
-    if (fname && !NON_NAME_WORDS.has(fname)) firstNames.push({author: author, firstName: fname});
-  });
-  return firstNames;
+  if (yearMatch) return entry.slice(0, yearMatch.index).trim();
+  // Fallback: take up to the first period that precedes a quote or title
+  const firstPeriod = entry.indexOf('.');
+  return firstPeriod > 0 ? entry.slice(0, firstPeriod).trim() : entry.trim();
 }
 
-// --- Gender APIs ---
-async function getGender(name) {
-  if (!name) return null;
-  try {
-    // GenderName.org first (unlimited)
-    let r1 = await fetch(`https://api.gendername.org/?name=${encodeURIComponent(name)}`);
-    let j1 = await r1.json();
-    if (j1 && j1.gender && j1.gender !== 'unknown') return j1.gender.toLowerCase();
-    // fallback Genderize.io
-    let r2 = await fetch(`https://api.genderize.io?name=${encodeURIComponent(name)}`);
-    let j2 = await r2.json();
-    if (j2 && j2.gender) return j2.gender.toLowerCase();
-  } catch(e) {
-    console.warn('API error for', name, e);
+function parseAuthorsFromBlock(block) {
+  if (!block) return [];
+
+  // normalize separators
+  block = block.replace(/\bet al\.?/ig, '');             // remove et al.
+               // keep parentheses and such for now
+
+  // unify " and " to a special token so last author can be detected
+  block = block.replace(/\s+and\s+/ig, ' ||and|| ');
+
+  // split by commas (but we'll regroup when pattern indicates lastname/firstname pairs)
+  const commaTokens = block.split(',').map(t => t.trim()).filter(Boolean);
+
+  const authors = [];
+  let i = 0;
+  while (i < commaTokens.length) {
+    const token = commaTokens[i];
+
+    // If token contains a space (likely "Firstname Lastname") or there is no next token,
+    // treat the token as a full author.
+    if (token.includes(' ') && (i === commaTokens.length - 1 || commaTokens[i+1].includes(' '))) {
+      // token like "Yphtach Lelkes" or stand-alone author
+      authors.push(token.replace(/\|\|and\|\|/g,'').trim());
+      i += 1;
+      continue;
+    }
+
+    // If next token exists, attempt to pair token + nextToken as "Lastname, Firstname"
+    if (i + 1 < commaTokens.length) {
+      const next = commaTokens[i+1];
+      // If next token is the "||and||" marker, then this token might be "Lastname, Firstname and"
+      if (next.includes('||and||')) {
+        const cleanNext = next.replace('||and||','').trim();
+        if (cleanNext) {
+          // pair token + cleanNext
+          authors.push(`${token}, ${cleanNext}`);
+        } else {
+          // if cleanNext empty (rare), just push token
+          authors.push(token);
+        }
+        i += 2;
+        continue;
+      }
+
+      // heuristic: if token looks like a last name (single word, initial-cap), and next token starts with a capital (a firstname),
+      // combine them as "Lastname, Firstname"
+      const tokenWords = token.split(/\s+/);
+      const nextWords = next.split(/\s+/);
+      const tokenIsSingle = tokenWords.length === 1;
+      const nextLooksLikeFirst = nextWords[0] && /^[A-Za-z]/.test(nextWords[0]);
+      // If next contains space (e.g., "Yphtach Lelkes"), then next is likely a "Firstname Lastname"—we should not pair; instead treat next as own author.
+      if (tokenIsSingle && !next.includes(' ') && nextLooksLikeFirst) {
+        // pair token + next
+        authors.push(`${token}, ${next}`);
+        i += 2;
+        continue;
+      }
+
+      // otherwise, if token contains "||and||" marker, split it out
+      if (token.includes('||and||')) {
+        authors.push(token.replace('||and||','').trim());
+        i++;
+        continue;
+      }
+
+      // fallback: if token has space (Firstname Lastname), push it
+      if (token.includes(' ')) {
+        authors.push(token.replace('||and||','').trim());
+        i++;
+        continue;
+      }
+
+      // If none of the heuristics matched, push token and advance
+      authors.push(token.replace('||and||','').trim());
+      i++;
+      continue;
+    } else {
+      // last token, push
+      authors.push(token.replace('||and||','').trim());
+      i++;
+    }
+  }
+
+  // final pass: split any authors that still contain "||and||"
+  return authors.flatMap(a => a.split(/\|\|and\|\|/).map(x=>x.trim()).filter(Boolean));
+}
+
+/* Extract given (first) name from an author entity
+   Handles:
+   - "Lastname, Firstname Middlename"
+   - "Firstname Middlename Lastname"
+   - "Lastname, Firstname M."
+   - "Firstname Lastname"
+*/
+function givenNameFromAuthor(author) {
+  if (!author) return null;
+  author = author.trim();
+
+  // if contains comma -> likely "Lastname, Firstname"
+  if (author.includes(',')) {
+    const parts = author.split(',').map(p => p.trim()).filter(Boolean);
+    if (parts.length >= 2) {
+      // take first non-initial token from parts[1]
+      const tokens = parts[1].split(/\s+/).map(t=>t.replace(/\./g,'')).filter(Boolean);
+      for (const t of tokens) {
+        if (t.length <= 1) continue;
+        const norm = normalizeToken(t);
+        if (!NON_NAME_WORDS.has(norm)) return norm;
+      }
+    }
+  } else {
+    // no comma: assume "Firstname Lastname ..." -> take first token that's not initial
+    const tokens = author.split(/\s+/).map(t=>t.replace(/\./g,'')).filter(Boolean);
+    for (const t of tokens) {
+      if (t.length <= 1) continue;
+      const norm = normalizeToken(t);
+      if (!NON_NAME_WORDS.has(norm)) return norm;
+    }
   }
   return null;
 }
 
-// --- Visualizations ---
+/* ---------- BATCH GENDERIZE ---------- */
+async function genderizeBatch(names) {
+  // input: array of unique first names
+  const out = {}; // name -> gender | null
+  const rawResponses = [];
+  for (let i=0; i<names.length; i+=BATCH_SIZE) {
+    const batch = names.slice(i, i+BATCH_SIZE);
+    const params = batch.map(n => 'name[]=' + encodeURIComponent(n)).join('&');
+    const url = 'https://api.genderize.io/?' + params;
+    try {
+      const resp = await fetch(url);
+      const json = await resp.json();
+      rawResponses.push({ url, status: resp.status, json });
+      // json is array
+      if (Array.isArray(json)) {
+        json.forEach(item => {
+          // gender can be null if not recognized
+          out[item.name] = item.gender || null;
+        });
+      } else if (json && json.name) {
+        out[json.name] = json.gender || null;
+      } else {
+        // unexpected structure
+        batch.forEach(n => out[n] = null);
+      }
+    } catch (err) {
+      console.warn('genderize batch error', err);
+      batch.forEach(n => out[n] = null);
+    }
+    // short pause to be polite
+    await new Promise(r=>setTimeout(r, 120));
+  }
+  // show raw responses for debugging
+  document.getElementById('rawResponses').textContent = JSON.stringify(rawResponses, null, 2);
+  return out;
+}
+
+/* ---------- VISUALS & CSV ---------- */
 let chart = null;
-function renderChart(male, female, unknown) {
+function renderPie(male, female, unknown) {
   const ctx = document.getElementById('genderChart').getContext('2d');
   if (chart) chart.destroy();
   chart = new Chart(ctx, {
-    type: 'pie',
-    data: {
-      labels: ['Male','Female','Unknown'],
-      datasets:[{data:[male,female,unknown], backgroundColor:['#007BFF','#FF69B4','#BBBBBB']}]
+    type:'pie',
+    data:{ labels:['Male','Female','Unknown'], datasets:[{data:[male,female,unknown], backgroundColor:['#007BFF','#FF69B4','#BBBBBB']}] },
+    options:{ plugins:{ legend:{ position:'bottom' } } }
+  });
+}
+
+function renderWordCloud(nameCounts, genderMap) {
+  const entries = Object.keys(nameCounts).map(n => {
+    const count = nameCounts[n];
+    const color = genderMap[n] === 'female' ? '#FF69B4' : (genderMap[n] === 'male' ? '#007BFF' : '#777');
+    return [n, Math.max(8, count*12), color];
+  });
+  WordCloud(document.getElementById('wordCloud'), {
+    list: entries.map(e => [e[0], e[1]]),
+    color: (word) => {
+      const f = entries.find(x => x[0] === word);
+      return f ? f[2] : '#000';
     },
-    options:{plugins:{legend:{position:'bottom'}}}
+    rotateRatio: 0.1,
+    backgroundColor: '#fff'
   });
 }
 
-function renderWordCloud(names, genders) {
-  const list = names.map(n=>{
-    const color = genders[n] === 'female' ? '#FF69B4' : genders[n]==='male' ? '#007BFF':'#999';
-    return [n, 20, color];
+function prepareCSV(authorObjects, genderMap) {
+  const rows = [['Full Author','Given Name','Gender','Occurrences']];
+  authorObjects.forEach(obj => {
+    rows.push([obj.fullAuthor, obj.givenName || '', genderMap[obj.givenName] || 'unknown', obj.count]);
   });
-  WordCloud(document.getElementById('wordCloud'),{
-    list:list.map(l=>[l[0],l[1]]),
-    color: word => { const f = list.find(x=>x[0]===word); return f?f[2]:'#000'; },
-    rotateRatio:0.1
-  });
-}
-
-// --- CSV ---
-function makeCSV(authors, genders) {
-  const rows=[['Author','First Name','Gender']];
-  authors.forEach(a=>rows.push([a.author,a.firstName,genders[a.firstName]||'unknown']));
-  const csv = rows.map(r=>r.join(',')).join('\n');
-  const blob = new Blob([csv],{type:'text/csv'});
+  const csv = rows.map(r => r.map(cell => `"${String(cell).replace(/"/g,'""')}"`).join(',')).join('\n');
+  const blob = new Blob([csv], { type: 'text/csv' });
   const url = URL.createObjectURL(blob);
   const btn = document.getElementById('downloadBtn');
-  btn.style.display='inline-block';
-  btn.onclick=()=>{ const a=document.createElement('a'); a.href=url; a.download='gender_analysis.csv'; a.click(); };
+  btn.style.display = 'inline-block';
+  btn.onclick = () => {
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'gender_analysis.csv';
+    a.click();
+  };
 }
 
-// --- Main ---
-document.getElementById('analyzeBtn').addEventListener('click', async()=>{
-  const text=document.getElementById('inputText').value;
-  if(!text.trim()) return alert('Paste bibliography text.');
-  const entries = text.split(/\n{2,}/).map(e=>e.trim()).filter(Boolean);
-  let allAuthors=[];
-  entries.forEach(entry=>{ allAuthors.push(...extractAuthors(entry)); });
+/* ---------- MAIN ---------- */
+document.getElementById('analyzeBtn').addEventListener('click', async () => {
+  const text = document.getElementById('inputText').value || '';
+  if (!text.trim()) { alert('Paste bibliography text.'); return; }
 
-  const uniqueFirstNames = [...new Set(allAuthors.map(a=>a.firstName))];
-  const genderMap={};
-  for(const name of uniqueFirstNames){
-    genderMap[name]=await getGender(name);
-    await new Promise(r=>setTimeout(r,120));
+  const entries = splitEntries(text);
+  // collect author strings
+  const authorEntities = []; // objects { fullAuthor, givenName }
+  for (const entry of entries) {
+    const block = extractAuthorBlock(entry);
+    if (!block) continue;
+    const parsed = parseAuthorsFromBlock(block); // array of author entity strings
+    parsed.forEach(a => {
+      // ignore short tokens or institution-like tokens
+      const cleaned = a.replace(/^\s+|\s+$/g, '');
+      if (cleaned && cleaned.length > 1) authorEntities.push(cleaned);
+    });
   }
 
-  let male=0,female=0,unknown=0;
-  allAuthors.forEach(a=>{
-    const g = genderMap[a.firstName];
-    if(g==='male') male++;
-    else if(g==='female') female++;
-    else unknown++;
+  // map unique author strings -> counts (occurrences)
+  const authorCount = {};
+  authorEntities.forEach(a => authorCount[a] = (authorCount[a]||0) + 1);
+  const uniqueAuthors = Object.keys(authorCount);
+
+  // get given names and form objects for each unique author
+  const authorObjects = uniqueAuthors.map(a => {
+    return { fullAuthor: a, givenName: givenNameFromAuthor(a), count: authorCount[a] };
   });
 
-  document.getElementById('results').innerHTML = `<h3>Summary</h3>
-    <p>Male authors: ${male}</p>
-    <p>Female authors: ${female}</p>
-    <p>Unknown: ${unknown}</p>`;
+  // unique first names to query
+  const firstNames = [...new Set(authorObjects.map(o => o.givenName).filter(Boolean))];
 
-  renderChart(male,female,unknown);
-  renderWordCloud(uniqueFirstNames,genderMap);
-  makeCSV(allAuthors,genderMap);
+  // batch query Genderize.io
+  const genderMap = await genderizeBatch(firstNames);
 
-  let html='<table><tr><th>Full Author</th><th>First Name</th><th>Gender</th></tr>';
-  allAuthors.forEach(a=>html+=`<tr><td>${a.author}</td><td>${a.firstName}</td><td>${genderMap[a.firstName]||'unknown'}</td></tr>`);
-  html+='</table>';
-  document.getElementById('debugTableWrap').innerHTML=html;
+  // compute totals (count occurrences by author)
+  let male = 0, female = 0, unknown = 0;
+  authorObjects.forEach(o => {
+    const g = o.givenName ? genderMap[o.givenName] : null;
+    if (g === 'male') male += o.count;
+    else if (g === 'female') female += o.count;
+    else unknown += o.count;
+  });
+
+  // render summary
+  document.getElementById('results').innerHTML = `
+    <h3>Summary</h3>
+    <p><strong>Male (by author occurrences):</strong> ${male}</p>
+    <p><strong>Female:</strong> ${female}</p>
+    <p><strong>Unknown:</strong> ${unknown}</p>
+    <p><small>(Unknown means genderize returned null or name not found.)</small></p>
+  `;
+
+  // word cloud / chart
+  // prepare nameCounts for word cloud (by occurrences)
+  const nameCounts = {};
+  authorObjects.forEach(o => {
+    if (!o.givenName) return;
+    nameCounts[o.givenName] = (nameCounts[o.givenName] || 0) + o.count;
+  });
+
+  renderPie(male, female, unknown);
+  renderWordCloud(nameCounts, genderMap);
+
+  // prepare CSV and debug table
+  prepareCSV(authorObjects, genderMap);
+
+  // debug table display
+  let html = '<table><thead><tr><th>Full Author</th><th>Given Name</th><th>Gender</th><th>Occurrences</th></tr></thead><tbody>';
+  authorObjects.forEach(o => {
+    html += `<tr><td>${o.fullAuthor}</td><td>${o.givenName || ''}</td><td>${genderMap[o.givenName] || 'unknown'}</td><td>${o.count}</td></tr>`;
+  });
+  html += '</tbody></table>';
+  document.getElementById('debugTableWrap').innerHTML = html;
 });
 </script>
 </body>
