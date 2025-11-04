@@ -1,296 +1,263 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8"/>
-<title>Gender Balance Analyzer — Bibliography Mode</title>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
+<title>Gender Balance Tool</title>
+
+<!-- Fonts & Libraries -->
+<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;600&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/wordcloud2.js/1.1.0/wordcloud2.min.js"></script>
+
+<!-- Style -->
 <style>
-  body {
-    font-family: 'Inter', sans-serif;
-    background: #f9fafc;
-    color: #222;
-    margin: 0;
-    padding: 40px;
-  }
-  h2 { text-align: center; margin-bottom: 10px; }
-  p.small { text-align: center; color: #666; margin-top: 0; margin-bottom: 30px; }
+body {
+  font-family: 'Montserrat', Arial, sans-serif;
+  background-color: #ffffff;
+  color: #222;
+  margin: 40px auto;
+  max-width: 1000px;
+  line-height: 1.5;
+}
 
-  .card {
-    background: #fff;
-    border-radius: 14px;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.05);
-    padding: 20px 24px;
-    margin-bottom: 30px;
-  }
+h2 {
+  color: #333;
+  margin-bottom: 8px;
+}
 
-  textarea {
-    width: 100%;
-    height: 240px;
-    border: 1px solid #ddd;
-    border-radius: 10px;
-    padding: 12px;
-    font-family: monospace;
-    font-size: 14px;
-    resize: vertical;
-  }
+p.small {
+  font-size: 0.9rem;
+  color: #555;
+  margin-top: 0;
+  margin-bottom: 20px;
+}
 
-  button {
-    padding: 10px 18px;
-    margin-right: 10px;
-    background:#2563eb;
-    color:#fff;
-    border:none;
-    border-radius:6px;
-    cursor:pointer;
-    font-weight:600;
-  }
-  button:hover{ background:#1e40af; }
-  #downloadBtn { display:none; }
+textarea {
+  width: 100%;
+  height: 240px;
+  margin-bottom: 15px;
+  font-family: monospace;
+  padding: 10px;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  resize: vertical;
+}
 
-  #visuals {
-    display: flex;
-    flex-wrap: wrap;
-    justify-content: center;
-    gap: 30px;
-    margin-top: 30px;
-  }
+button {
+  padding: 10px 16px;
+  margin-right: 8px;
+  background: #518e5f;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: 600;
+  transition: background 0.2s;
+}
 
-  #chartContainer, #wordCloud {
-    flex: 1 1 400px;
-    max-width: 500px;
-    min-width: 350px;
-  }
-  #wordCloud { height: 400px; border: 1px solid #eee; border-radius: 10px; }
+button:hover {
+  background: #3f6f4b;
+}
 
-  #results p { margin: 6px 0; font-size: 15px; }
+#chartContainer {
+  width: 360px;
+  margin-top: 20px;
+  display: inline-block;
+  vertical-align: top;
+}
 
-  table {
-    border-collapse: collapse;
-    width: 100%;
-    margin-top: 10px;
-    font-size: 14px;
-  }
-  th, td {
-    border: 1px solid #ddd;
-    padding: 8px 10px;
-    text-align: left;
-  }
-  th { background: #f3f4f6; font-weight:600; }
-  .debug { display:none; white-space: pre-wrap; font-size: 13px; color:#555; background:#f8fafc; padding:10px; border-radius:8px; }
+#wordCloud {
+  width: 560px;
+  height: 360px;
+  border: 1px solid #eee;
+  display: inline-block;
+  vertical-align: top;
+  margin-left: 20px;
+}
 
-  .spinner {
-    display: none;
-    margin: 20px auto;
-    border: 4px solid #eee;
-    border-top: 4px solid #2563eb;
-    border-radius: 50%;
-    width: 32px;
-    height: 32px;
-    animation: spin 1s linear infinite;
-  }
-  @keyframes spin {
-    0% { transform: rotate(0deg); }
-    100% { transform: rotate(360deg); }
-  }
+table {
+  border-collapse: collapse;
+  width: 100%;
+  margin-top: 18px;
+  font-size: 0.95rem;
+}
 
-  .center { text-align:center; }
+th, td {
+  border: 1px solid #ddd;
+  padding: 8px 10px;
+  text-align: left;
+}
+
+th {
+  background: #f4f4f4;
+  font-weight: 600;
+}
+
+.small {
+  font-size: 0.9rem;
+  color:#555;
+}
+
+#results h3 {
+  margin-bottom: 6px;
+}
+
+#results p {
+  margin: 2px 0;
+}
 </style>
 </head>
 <body>
-  <h2>Gender Balance Analyzer — Bibliography Mode</h2>
-  <p class="small">Paste your bibliography to estimate the gender balance of cited authors.</p>
+<h2>Gender Balance Analyzer — Bibliography Mode</h2>
+<p class="small">Paste your bibliography, and this tool will extract author names, estimate gender, and visualize the results.</p>
 
-  <div class="card">
-    <textarea id="inputText" placeholder="Paste bibliography here..."></textarea><br>
-    <div class="center" style="margin-top:10px;">
-      <button id="analyzeBtn">🔍 Analyze</button>
-      <button id="downloadBtn">⬇️ Download CSV</button>
-      <button id="toggleDebugBtn">🐞 Show Debug Info</button>
-    </div>
-  </div>
+<textarea id="inputText" placeholder="Paste bibliography here..."></textarea><br>
+<button id="analyzeBtn">Analyze</button>
+<button id="downloadBtn" style="display:none">Download CSV</button>
 
-  <div class="spinner" id="spinner"></div>
+<div id="visuals" style="margin-top:20px;">
+  <div id="chartContainer"><canvas id="genderChart"></canvas></div>
+  <div id="wordCloud"></div>
+</div>
 
-  <div class="card" id="summaryCard" style="display:none;">
-    <div id="results"></div>
-    <div id="visuals">
-      <div id="chartContainer"><canvas id="genderChart"></canvas></div>
-      <div id="wordCloud"></div>
-    </div>
-  </div>
-
-  <div class="card debug" id="debugWrap">
-    <h4>Debug Table</h4>
-    <div id="debugTableWrap"></div>
-    <h4>Raw API Responses</h4>
-    <pre id="rawResponses"></pre>
-  </div>
+<div id="results"></div>
+<h4>Debug table (authors & first names)</h4>
+<div id="debugTableWrap"></div>
 
 <script>
-const GENDER_API_KEY = "f10b8738336d248c431e700b6a5cf18c63454df09aa0fb75cd03b85b3ecebbf2";
-const NON_NAME_WORDS = new Set(["Journal","Press","University","Review","Politics","Science","Sociology","American","Oxford","Cambridge","Harvard","Stanford","Quarterly","PNAS","RSF","Proceedings","Springer","Routledge"]);
-const BATCH_SIZE = 10;
+// --- Utilities ---
+const NON_NAME_WORDS = new Set(["Journal","Press","University","Review","Politics","Science","Sociology","American","Oxford","Cambridge","Harvard","Stanford","Quarterly","PNAS","RSF"]);
 
-function normalizeToken(tok) {
-  if (!tok) return '';
-  tok = tok.replace(/[.,]/g, '').trim();
-  if (!tok) return '';
-  if (tok === tok.toUpperCase()) tok = tok.toLowerCase();
-  return tok.charAt(0).toUpperCase() + tok.slice(1);
+function normalizeWord(w) {
+  w = w.replace(/[.,]/g,'').trim();
+  if (!w) return '';
+  return w.charAt(0).toUpperCase() + w.slice(1).toLowerCase();
 }
 
-function extractAuthorBlock(entry) {
+// --- Author extraction ---
+function extractAuthors(entry) {
   const yearMatch = entry.match(/\b(17|18|19|20)\d{2}\b/);
-  return yearMatch ? entry.slice(0, yearMatch.index).trim() : entry;
-}
+  let block = yearMatch ? entry.slice(0, yearMatch.index) : entry;
+  block = block.replace(/\bet al\.?/gi,'');
+  
+  // Split multiple authors: " and ", semicolon, or comma before capital letter
+  let authors = block.split(/\s+and\s+|;|,(?=\s*[A-Z][a-z])/).map(a => a.trim()).filter(Boolean);
 
-function parseAuthors(entry) {
-  let block = extractAuthorBlock(entry);
-  block = block.replace(/\bet al\.?/gi,'').replace(/\s+and\s+/ig, ' ||and|| ');
-  const tokens = block.split(',').map(t=>t.trim()).filter(Boolean);
-  const authors = [];
-  let i=0;
-  while(i<tokens.length){
-    const t = tokens[i];
-    if(t.includes('||and||')) { authors.push(t.replace('||and||','').trim()); i++; continue; }
-    if(i+1<tokens.length && !tokens[i+1].includes(' ')) {
-      authors.push(`${t}, ${tokens[i+1]}`); i+=2; continue;
-    }
-    if(i+1<tokens.length && tokens[i+1].includes(' ')) { authors.push(t); i++; continue; }
-    authors.push(t); i++;
-  }
-  return authors.flatMap(a=>a.split('||and||').map(x=>x.trim()).filter(Boolean));
-}
-
-function givenName(author){
-  if(!author) return null;
-  if(author.includes(',')){
-    const parts = author.split(',').map(p=>p.trim());
-    if(parts[1]){
-      const t = parts[1].split(/\s+/).find(w=>w.length>1);
-      const name = normalizeToken(t);
-      if(!NON_NAME_WORDS.has(name)) return name;
-    }
-  } else {
-    const t = author.split(/\s+/).find(w=>w.length>1);
-    const name = normalizeToken(t);
-    if(!NON_NAME_WORDS.has(name)) return name;
-  }
-  return null;
-}
-
-async function genderizeBatch(names){
-  const result = {}, raw=[];
-  for(let i=0;i<names.length;i+=BATCH_SIZE){
-    const batch = names.slice(i,i+BATCH_SIZE);
-    const params = batch.map(n=>'name[]='+encodeURIComponent(n)).join('&');
-    const url = 'https://api.genderize.io/?'+params;
-    try{
-      const r = await fetch(url);
-      const j = await r.json();
-      if(Array.isArray(j)){
-        j.forEach(x=>{ result[x.name]=x.gender||null; });
+  const firstNames = [];
+  authors.forEach(author => {
+    if (!author) return;
+    let fname = null;
+    if (author.includes(',')) {
+      let parts = author.split(',');
+      if (parts.length >= 2) {
+        let tokens = parts[1].trim().split(/\s+/).filter(t => t.length>1);
+        if (tokens.length>0) fname = normalizeWord(tokens[0].replace(/\./g,''));
       }
-      raw.push({api:"Genderize",resp:j});
-    }catch(e){ console.warn(e); }
-    await new Promise(r=>setTimeout(r,150));
-  }
-  document.getElementById('rawResponses').textContent=JSON.stringify(raw,null,2);
-  return result;
+    } else {
+      let tokens = author.trim().split(/\s+/).filter(t => t.length>1);
+      if (tokens.length>0) fname = normalizeWord(tokens[0].replace(/\./g,''));
+    }
+    if (fname && !NON_NAME_WORDS.has(fname)) firstNames.push({author: author, firstName: fname});
+  });
+  return firstNames;
 }
 
-async function genderApiFallback(names, existing){
-  const result = {...existing};
-  const missing = names.filter(n=>!result[n]||result[n]===null);
-  const raw = [];
-  for(const n of missing){
-    try{
-      const url = `https://gender-api.com/get?key=${GENDER_API_KEY}&name=${encodeURIComponent(n)}`;
-      const r = await fetch(url);
-      const j = await r.json();
-      raw.push({api:"Gender-API",name:n,resp:j});
-      if(j.gender) result[n] = j.gender.toLowerCase();
-    }catch(e){ console.warn('Gender-API error',e); }
-    await new Promise(r=>setTimeout(r,150));
+// --- Gender APIs ---
+const GENDER_API_KEY = "f10b8738336d248c431e700b6a5cf18c63454df09aa0fb75cd03b85b3ecebbf2";
+
+async function getGender(name) {
+  if (!name) return null;
+  try {
+    // Primary: Genderize.io
+    let r1 = await fetch(`https://api.genderize.io?name=${encodeURIComponent(name)}`);
+    let j1 = await r1.json();
+    if (j1 && j1.gender) return j1.gender.toLowerCase();
+
+    // Fallback: Gender-API.com
+    let r2 = await fetch(`https://gender-api.com/get?name=${encodeURIComponent(name)}&key=${GENDER_API_KEY}`);
+    let j2 = await r2.json();
+    if (j2 && j2.gender) return j2.gender.toLowerCase();
+  } catch (e) {
+    console.warn('API error for', name, e);
   }
-  const existingRaw = JSON.parse(document.getElementById('rawResponses').textContent || "[]");
-  document.getElementById('rawResponses').textContent = JSON.stringify([...existingRaw, ...raw], null, 2);
-  return result;
+  return 'unknown';
 }
 
-let chart=null;
-function renderPie(m,f,u){
-  const ctx=document.getElementById('genderChart').getContext('2d');
-  if(chart)chart.destroy();
-  chart=new Chart(ctx,{
-    type:'pie',
-    data:{labels:['Male','Female','Unknown'],datasets:[{data:[m,f,u],backgroundColor:['#3b82f6','#ec4899','#cbd5e1']}]},
+// --- Visualizations ---
+let chart = null;
+function renderChart(male, female, unknown) {
+  const ctx = document.getElementById('genderChart').getContext('2d');
+  if (chart) chart.destroy();
+  chart = new Chart(ctx, {
+    type: 'pie',
+    data: {
+      labels: ['Male','Female','Unknown'],
+      datasets:[{data:[male,female,unknown], backgroundColor:['#4a90e2','#ff69b4','#bbb']}]
+    },
     options:{plugins:{legend:{position:'bottom'}}}
   });
 }
 
-function renderWordCloud(names,genders){
-  const list=Object.keys(names).map(n=>{
-    const color=genders[n]==='female'?'#ec4899':genders[n]==='male'?'#3b82f6':'#94a3b8';
-    return [n,names[n]*12,color];
+function renderWordCloud(names, genders) {
+  const list = names.map(n=>{
+    const color = genders[n] === 'female' ? '#ff69b4' : genders[n]==='male' ? '#4a90e2':'#999';
+    return [n, 20, color];
   });
   WordCloud(document.getElementById('wordCloud'),{
     list:list.map(l=>[l[0],l[1]]),
-    color:(word)=>{const f=list.find(x=>x[0]===word);return f?f[2]:'#000';},
+    color: word => { const f = list.find(x=>x[0]===word); return f?f[2]:'#000'; },
     rotateRatio:0.1
   });
 }
 
-function makeCSV(auths,genders){
-  const rows=[['Full Author','Given Name','Gender']];
-  auths.forEach(a=>rows.push([a.full,a.given,genders[a.given]||'unknown']));
-  const csv=rows.map(r=>r.join(',')).join('\n');
-  const blob=new Blob([csv],{type:'text/csv'});
-  const url=URL.createObjectURL(blob);
-  const btn=document.getElementById('downloadBtn');
+// --- CSV ---
+function makeCSV(authors, genders) {
+  const rows=[['Author','First Name','Gender']];
+  authors.forEach(a=>rows.push([a.author,a.firstName,genders[a.firstName]||'unknown']));
+  const csv = rows.map(r=>r.join(',')).join('\n');
+  const blob = new Blob([csv],{type:'text/csv'});
+  const url = URL.createObjectURL(blob);
+  const btn = document.getElementById('downloadBtn');
   btn.style.display='inline-block';
-  btn.onclick=()=>{const a=document.createElement('a');a.href=url;a.download='gender_analysis.csv';a.click();};
+  btn.onclick=()=>{ const a=document.createElement('a'); a.href=url; a.download='gender_analysis.csv'; a.click(); };
 }
 
-document.getElementById('toggleDebugBtn').addEventListener('click',()=>{
-  const d=document.getElementById('debugWrap');
-  d.style.display=d.style.display==='none'?'block':'none';
-});
+// --- Main ---
+document.getElementById('analyzeBtn').addEventListener('click', async()=>{
+  const text=document.getElementById('inputText').value;
+  if(!text.trim()) return alert('Paste bibliography text.');
+  const entries = text.split(/\n{2,}/).map(e=>e.trim()).filter(Boolean);
+  let allAuthors=[];
+  entries.forEach(entry=>{ allAuthors.push(...extractAuthors(entry)); });
 
-document.getElementById('analyzeBtn').addEventListener('click',async()=>{
-  const txt=document.getElementById('inputText').value.trim();
-  if(!txt)return alert('Paste some bibliography text first.');
-  document.getElementById('spinner').style.display='block';
-  document.getElementById('summaryCard').style.display='none';
-  const entries=txt.split(/\n{2,}/).map(e=>e.trim()).filter(Boolean);
-  const all=[];
-  entries.forEach(e=>parseAuthors(e).forEach(a=>all.push(a)));
-  const objects=all.map(a=>({full:a,given:givenName(a)}));
-  const unique=[...new Set(objects.map(o=>o.given).filter(Boolean))];
-  let genders=await genderizeBatch(unique);
-  genders=await genderApiFallback(unique,genders);
-  let m=0,f=0,u=0;
-  objects.forEach(o=>{
-    const g=genders[o.given];
-    if(g==='male')m++;else if(g==='female')f++;else u++;
+  const uniqueFirstNames = [...new Set(allAuthors.map(a=>a.firstName))];
+  const genderMap={};
+  for(const name of uniqueFirstNames){
+    genderMap[name]=await getGender(name);
+    await new Promise(r=>setTimeout(r,150));
+  }
+
+  let male=0,female=0,unknown=0;
+  allAuthors.forEach(a=>{
+    const g = genderMap[a.firstName];
+    if(g==='male') male++;
+    else if(g==='female') female++;
+    else unknown++;
   });
-  document.getElementById('results').innerHTML=`<h3>Summary</h3>
-  <p><strong>Male authors:</strong> ${m}</p>
-  <p><strong>Female authors:</strong> ${f}</p>
-  <p><strong>Unknown:</strong> ${u}</p>`;
-  renderPie(m,f,u);
-  const nameCounts={};
-  objects.forEach(o=>{if(!o.given)return;nameCounts[o.given]=(nameCounts[o.given]||0)+1;});
-  renderWordCloud(nameCounts,genders);
-  makeCSV(objects,genders);
-  let html='<table><tr><th>Full Author</th><th>Given Name</th><th>Gender</th></tr>';
-  objects.forEach(o=>{html+=`<tr><td>${o.full}</td><td>${o.given||''}</td><td>${genders[o.given]||'unknown'}</td></tr>`;});
+
+  document.getElementById('results').innerHTML = `<h3>Summary</h3>
+    <p><b>Male authors:</b> ${male}</p>
+    <p><b>Female authors:</b> ${female}</p>
+    <p><b>Unknown:</b> ${unknown}</p>`;
+
+  renderChart(male,female,unknown);
+  renderWordCloud(uniqueFirstNames,genderMap);
+  makeCSV(allAuthors,genderMap);
+
+  let html='<table><tr><th>Full Author</th><th>First Name</th><th>Gender</th></tr>';
+  allAuthors.forEach(a=>html+=`<tr><td>${a.author}</td><td>${a.firstName}</td><td>${genderMap[a.firstName]||'unknown'}</td></tr>`);
   html+='</table>';
   document.getElementById('debugTableWrap').innerHTML=html;
-  document.getElementById('summaryCard').style.display='block';
-  document.getElementById('spinner').style.display='none';
 });
 </script>
 </body>
