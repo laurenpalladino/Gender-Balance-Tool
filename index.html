@@ -337,7 +337,7 @@ function renderPie(male, female, unknown) {
     type: 'pie',
     data: {
       labels: ['Male', 'Female', 'Unknown'],
-      datasets: [{ data: [male, female, unknown], backgroundColor: ['#518e5f', '#f08fb5', '#d1d5db'] }]
+      datasets: [{ data: [male, female, unknown], backgroundColor: ['#4682B4', '#f08fb5', '#d1d5db'] }]
     },
     options: { plugins: { legend: { position: 'bottom' } } }
   });
@@ -346,7 +346,7 @@ function renderPie(male, female, unknown) {
 function renderWordCloud(nameCounts, genderMap) {
   const list = Object.keys(nameCounts).map(n => {
     const count = nameCounts[n];
-    const color = genderMap[n] === 'female' ? '#f08fb5' : (genderMap[n] === 'male' ? '#518e5f' : '#94a3b8');
+    const color = genderMap[n] === 'female' ? '#f08fb5' : (genderMap[n] === 'male' ? '#4682B4' : '#94a3b8');
     return [n, Math.max(8, count * 12), color];
   });
   WordCloud(document.getElementById('wordCloud'), {
